@@ -4,17 +4,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	//"crypto/sha256"
-	//"crypto/subtle"
 	"encoding/json"
 	"log"
 )
 
 type authConfig struct {
-		Username string
-		Password string
-		Student bool
-		LeftHanded bool
+	Username string
+	Password string
+	Student bool
+	LeftHanded bool
+}
+
+type tokenResponse struct {
+	token string
+	validTil string
 }
 
 type application struct {
@@ -37,25 +40,24 @@ func (app *application) register(w http.ResponseWriter, r *http.Request) {
 	if validRequest {
 		// serveHTTP does this, we dont actually need to
 		defer r.Body.Close()
-		fmt.Fprintln(w, "here's your token")
 		jd := json.NewDecoder(r.Body)
 		jd.DisallowUnknownFields()
-		for {
-			var ac authConfig
-			if err := jd.Decode(&ac); err == io.EOF {
-				break		
-			} else if err != nil {
-				fmt.Fprintln(w, "Invalid payload")
-				break
-			}
-			fmt.Fprintf(
-				w, "username is: %s, password is: %s, student: %t, leftHanded: %t\n",
-				ac.Username, ac.Password, ac.Student, ac.LeftHanded,
-			)
+		var ac authConfig
+		if err := jd.Decode(&ac); err != nil {
+			http.Error(w, "Invalid Payload", http.StatusBadRequest)
+			return
 		}
-		return
+		w.Header().Set("Content-Type", "application/json")
+		t, v := register_user(ac)
+		tr := tokenResponse{
+			token: t,
+			validTil: v,
+		}
+		if err := json.NewEncoder(w).Encode(tr); err != nil {
+			http.Error(w, "something went wrong; cannot serialise token", http.StatusInternalServerError)
+			return
+		}
 	}
-	fmt.Fprintln(w, "Invalid Request.")
 }
 
 func (app *application) basicAuth(next http.HandlerFunc) http.HandlerFunc {
