@@ -1,11 +1,12 @@
 package server
 
 import (
-	"fmt"
-	"io"
-	"net/http"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
+	"github.com/DJisaiah/pomotracker-sync/internal/db"
 )
 
 type authConfig struct {
@@ -21,66 +22,57 @@ type tokenResponse struct {
 }
 
 type application struct {
-	auth authConfig
+	sa serverActions
 }
 
-
-
-func (app *application) protectedHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "this is the protected handler")
-}
-
-func (app *application) unprotectedHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "this is the unprotected handler")
-}
-
+// only accept POST and json on this endpoint
 func (app *application) register(w http.ResponseWriter, r *http.Request) {
-	// only accept POST and json on this endpoint
 	validRequest := r.Header.Get("Content-Type") == "application/json"
-	if validRequest {
-		// serveHTTP does this, we dont actually need to
-		defer r.Body.Close()
-		jd := json.NewDecoder(r.Body)
-		jd.DisallowUnknownFields()
-		var ac authConfig
-		if err := jd.Decode(&ac); err != nil {
-			http.Error(w, "Invalid Payload", http.StatusBadRequest)
-			return
+	if !validRequest {
+		http.Error(w, "Invalid Request Type", http.StatusBadRequest)
+		return
+	}
+
+	// serveHTTP does this, we dont actually need to
+	defer r.Body.Close()
+	jd := json.NewDecoder(r.Body)
+	jd.DisallowUnknownFields()
+	var ac authConfig
+	if err := jd.Decode(&ac); err != nil {
+		http.Error(w, "Invalid Payload", http.StatusBadRequest)
+		return
+	}
+
+	t, v, err := app.sa.registerUser(ac)
+	if err != nil {
+		switch {
+			case errors.Is(err, db.ErrUserAlreadyExists):
+				http.Error(w, db.ErrUserAlreadyExists.Error(), http.StatusConflict)
+			case errors.Is(err, db.ErrInvalidUsername):
+				http.Error(w, db.ErrInvalidUsername.Error(), http.StatusBadRequest)
+			case errors.Is(err, db.ErrInvalidPassword):
+				http.Error(w, db.ErrInvalidPassword.Error(), http.StatusBadRequest)
+			default:
+				log.Printf("unresolved error in user registration")
+				http.Error(w, "Internal server error occured. Please try again later.", http.StatusInternalServerError)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		t, v := register_user(ac)
-		tr := tokenResponse{
-			token: t,
-			validTil: v,
-		}
-		if err := json.NewEncoder(w).Encode(tr); err != nil {
-			http.Error(w, "something went wrong; cannot serialise token", http.StatusInternalServerError)
-			return
-		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	tr := tokenResponse{
+		token: t,
+		validTil: v,
+	}
+	if err := json.NewEncoder(w).Encode(tr); err != nil {
+		http.Error(w, "something went wrong; cannot serialise token", http.StatusInternalServerError)
+		return
 	}
 }
 
-func (app *application) basicAuth(next http.HandlerFunc) http.HandlerFunc {
-	return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
-		username, password, ok := r.BasicAuth()
-		if ok {
-			fmt.Printf("Username is: %s, Password is: %s\n", username, password)
-			fmt.Println("serving...")
-			next.ServeHTTP(w, r)
-			return
-		}
-		fmt.Println("not okay")
-		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-	})
-}
-
-
-func Start() {
-	app := application{}
+func start(sa serverActions) {
+	app := application{sa: sa}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /lobby", app.unprotectedHandler)
-	mux.HandleFunc("GET /login", app.basicAuth(app.protectedHandler))
 	mux.HandleFunc("POST /register", app.register)
 
 	srv := &http.Server{
