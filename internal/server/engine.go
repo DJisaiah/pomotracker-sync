@@ -15,13 +15,23 @@ func StartServer(q *db.Queries) {
 	start(s)
 }
 
-func (sa serverActions) registerUser(ac authConfig) (string, string, error) {
+func (sa serverActions) registerUser(ac db.AuthConfig) (string, string, error) {
 	tkn := rand.Text()
 	vTil := "somedate"
 	slt := make([]byte, 32)
 	rand.Read(slt)
-	hsh := argon2.IDKey([]byte(ac.Password), slt, 3, 64*1024, 4, 32)
-	err := sa.q.AddUser(ac.Username, hsh, ac.Student, ac.LeftHanded)
+	pH := argon2.IDKey([]byte(ac.Password), slt, 3, 64*1024, 4, 32)
+
+	usr := db.User{
+		LoginDetails: ac,
+		LoginCrypt: db.AuthCrypt{
+			PasswordHash: pH,
+			Salt: slt,
+			Token: tkn,
+			ValidTil: vTil,
+		},
+	}
+	err := sa.q.AddUser(usr)
 	if err != nil {
 		return "", "", err
 	}

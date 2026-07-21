@@ -3,26 +3,18 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"github.com/DJisaiah/pomotracker-sync/internal/db"
 )
 
-type authConfig struct {
-	Username string
-	Password string
-	Student bool
-	LeftHanded bool
+type application struct {
+	sa serverActions
 }
 
 type tokenResponse struct {
 	token string
 	validTil string
-}
-
-type application struct {
-	sa serverActions
 }
 
 // only accept POST and json on this endpoint
@@ -37,7 +29,8 @@ func (app *application) register(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	jd := json.NewDecoder(r.Body)
 	jd.DisallowUnknownFields()
-	var ac authConfig
+	var ac db.AuthConfig
+	// if payload doesnt match struct members dont accept
 	if err := jd.Decode(&ac); err != nil {
 		http.Error(w, "Invalid Payload", http.StatusBadRequest)
 		return
@@ -52,8 +45,10 @@ func (app *application) register(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, db.ErrInvalidUsername.Error(), http.StatusBadRequest)
 			case errors.Is(err, db.ErrInvalidPassword):
 				http.Error(w, db.ErrInvalidPassword.Error(), http.StatusBadRequest)
+			case errors.Is(err, db.ErrFailedToRegister):
+				http.Error(w, db.ErrFailedToRegister.Error(), http.StatusInternalServerError)
 			default:
-				log.Printf("unresolved error in user registration")
+				log.Printf("unresolved error in user registration: %v", err)
 				http.Error(w, "Internal server error occured. Please try again later.", http.StatusInternalServerError)
 		}
 		return
@@ -65,6 +60,7 @@ func (app *application) register(w http.ResponseWriter, r *http.Request) {
 		validTil: v,
 	}
 	if err := json.NewEncoder(w).Encode(tr); err != nil {
+		log.Printf("unresolved error in token encoding: %v", err)
 		http.Error(w, "something went wrong; cannot serialise token", http.StatusInternalServerError)
 		return
 	}
